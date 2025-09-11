@@ -9,13 +9,16 @@ const HidAction = union(enum) {
     press: u8,
     release,
 };
-pub fn HelperType() type {
-    const QueueHidCodes = GenericQueue(u8, 1000);
+pub const HelperSettings = struct {
+    max_buffer_size: usize,
+};
+pub fn HelperType(settings: HelperSettings) type {
+    const QueueHidCodes = GenericQueue(u8, settings.max_buffer_size);
     return struct {
         const Self = @This();
         var queue_hid: QueueHidCodes = QueueHidCodes.Create();
         var last_hid_send: u64 = 0;
-        var buf: [2000]u8 = undefined;
+        var buf: [settings.max_buffer_size]u8 = undefined;
         pub fn Create() Self {
             usb_if.init(usb_dev);
             return Self{};
