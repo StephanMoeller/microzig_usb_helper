@@ -12,6 +12,7 @@ pub fn main() !void {
         if (keyboard.get_queue_size() == 0) {
             try keyboard.send_string("tick_counter has now reached {}", .{tick_counter});
         }
+        // This should be called at every tick, even though there has not been logged anything to keep the usb connection alive.
         try keyboard.do_house_keeping();
     }
 }
