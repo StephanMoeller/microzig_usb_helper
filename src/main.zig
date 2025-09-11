@@ -6,11 +6,14 @@ const usb_keyboard = @import("usb_keyboard.zig");
 pub fn main() !void {
     var keyboard = usb_keyboard.HelperType(.{ .max_buffer_size = 2000 }).Create();
     var tick_counter: u64 = 0;
+    var enter: bool = false;
     while (true) {
         tick_counter += 1;
         // the logic here is just to write the same string when the keyboards internal queue is empty but send_string
         if (keyboard.get_queue_size() == 0) {
-            try keyboard.send_string("tick_counter has now reached {}", .{tick_counter});
+            try keyboard.send_string("echo '1234567890 1234567890 1234567890 1234567890 1234567890 1234567890 1234567890 1234567890 1234567890 1234567890'\n", .{});
+
+            enter = !enter;
         }
         // This should be called at every tick, even though there has not been logged anything to keep the usb connection alive.
         try keyboard.do_house_keeping();

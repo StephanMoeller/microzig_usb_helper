@@ -5,6 +5,7 @@ const usb_if = @import("usb_if.zig");
 const usb_dev = rp2xxx.usb.Usb(.{});
 
 var data: [7]u8 = [7]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+var current_pointer: usize = 1;
 const HidAction = union(enum) {
     press: u8,
     release,
@@ -19,6 +20,7 @@ pub fn HelperType(settings: HelperSettings) type {
         var queue_hid: QueueHidCodes = QueueHidCodes.Create();
         var last_hid_send: u64 = 0;
         var buf: [settings.max_buffer_size]u8 = undefined;
+        const send_rate_us: u64 = 12000; // some number a little slower than 10ms
         pub fn Create() Self {
             usb_if.init(usb_dev);
             return Self{};
@@ -29,18 +31,24 @@ pub fn HelperType(settings: HelperSettings) type {
         pub fn do_house_keeping(_: Self) !void {
             usb_dev.task(false) catch unreachable; // Process pending USB housekeeping
             const current_time = time.get_time_since_boot().to_us();
-            if (current_time > last_hid_send + 10000) {
-                if (queue_hid.Count() > 0) {
-                    try send_hid_code(try queue_hid.dequeue());
-                }
+            if (current_time > last_hid_send + send_rate_us) {
+                try flush_next();
                 last_hid_send = current_time;
             }
+        }
+        fn flush_next() !void {
+            data[2] = queue_hid.dequeue() catch 0;
+            data[3] = queue_hid.dequeue() catch 0;
+            data[4] = queue_hid.dequeue() catch 0;
+            data[5] = queue_hid.dequeue() catch 0;
+            data[6] = queue_hid.dequeue() catch 0;
+
+            usb_if.send_keyboard_report(usb_dev, &data);
         }
         pub fn send_string(_: Self, comptime fmt: []const u8, args: anytype) !void {
             const msg = try std.fmt.bufPrint(&buf, fmt, args);
             for (msg) |char| {
                 queue_hid.enqueue(char_to_hid(char)) catch {};
-                queue_hid.enqueue(0) catch {}; //this will set the letter position in use to 0 indicating a release again
             }
         }
     };
@@ -53,15 +61,7 @@ const std = @import("std");
 //  add an rgb
 //
 //
-pub fn send_hid_code(hid_code: u8) !void {
-    data[5] = hid_code;
-    usb_if.send_keyboard_report(usb_dev, &data);
-}
-pub fn send_chars(msg: []const u8) !void {
-    for (msg) |char| {
-        try send_hid_code(char_to_hid(char));
-    }
-}
+
 pub fn char_to_hid(char: u8) u8 {
     const hid_val: u8 = switch (char) {
         'a' => KC_A,
