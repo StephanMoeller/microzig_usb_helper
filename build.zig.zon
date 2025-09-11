@@ -1,0 +1,17 @@
+.{
+    .name = .he_poc,
+    .version = "0.0.0",
+    .fingerprint = 0xf5f6e4873af69e36, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .microzig = .{
+            .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.14.2/microzig.tar.gz",
+            .hash = "microzig-0.14.2-D20YSYYaCADqpV3aZeb9T1_Y7Y1-O74LeNdlWheTG_pk",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

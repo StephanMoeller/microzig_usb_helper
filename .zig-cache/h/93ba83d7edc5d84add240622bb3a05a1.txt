@@ -1,0 +1,3 @@
+0
+3494816 29781941 1757612320608682793 b7de4bd1cab5a8c5a0e37805fe8d9e24 1 .zig-cache/o/99e59302a930029cc2f23905c22ad421/generate_linker_script
+256 29767748 1756467815290986499 d2708e94894edf325c96fb07dcd9eec7 3 p/mz_port_raspberrypi_rp2xxx-0.0.0-wCvtiaXbDQD5PP4XzQaAh7CXHjR52y-0G6B7dWLsfR_b/ld/rp2040/sections.ld
