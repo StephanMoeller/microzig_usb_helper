@@ -1,9 +1,10 @@
 const time = rp2xxx.time;
 const microzig = @import("microzig");
 const rp2xxx = microzig.hal;
-const usb_if = @import("usb_if.zig");
 const usb_dev = rp2xxx.usb.Usb(.{});
 
+const usb = rp2xxx.usb;
+const hid = usb.hid;
 var data: [7]u8 = [7]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 var current_pointer: usize = 1;
 const HidAction = union(enum) {
@@ -21,6 +22,7 @@ pub fn HelperType(settings: HelperSettings) type {
         var last_hid_send: u64 = 0;
         var buf: [settings.max_buffer_size]u8 = undefined;
         const send_rate_us: u64 = 12000; // some number a little slower than 10ms
+        var last_released: bool = false;
         pub fn Create() Self {
             usb_if.init(usb_dev);
             return Self{};
@@ -37,11 +39,26 @@ pub fn HelperType(settings: HelperSettings) type {
             }
         }
         fn flush_next() !void {
-            data[2] = queue_hid.dequeue() catch 0;
-            data[3] = queue_hid.dequeue() catch 0;
-            data[4] = queue_hid.dequeue() catch 0;
-            data[5] = queue_hid.dequeue() catch 0;
-            data[6] = queue_hid.dequeue() catch 0;
+            if (last_released) {
+                var i: usize = 2;
+                while (i <= 6 and queue_hid.Count() > 0) {
+                    const peek_var: u8 = queue_hid.peek().?;
+                    if (i > 2 and peek_var <= data[i - 1]) {
+                        break;
+                    } else {
+                        data[i] = queue_hid.dequeue() catch unreachable;
+                    }
+
+                    i += 1;
+                }
+            } else {
+                data[2] = 0;
+                data[3] = 0;
+                data[4] = 0;
+                data[5] = 0;
+                data[6] = 0;
+            }
+            last_released = !last_released;
 
             usb_if.send_keyboard_report(usb_dev, &data);
         }
@@ -230,3 +247,119 @@ pub fn GenericQueue(comptime T: type, comptime max_capacity: usize) type {
         }
     };
 }
+
+const usb_if = struct {
+    pub const HID_KeymodifierCodes = enum(u8) {
+        left_control = 0xe0,
+        left_shift,
+        left_alt,
+        left_gui,
+        right_control,
+        right_shift,
+        right_alt,
+        right_gui,
+    };
+
+    // HID descriptor for keyboard
+    const KeyboardReportDescriptor = hid.hid_usage_page(1, hid.UsageTable.desktop) ++
+        hid.hid_usage(1, hid.DesktopUsage.keyboard) ++
+        hid.hid_collection(hid.CollectionItem.Application) ++
+        hid.hid_usage_page(1, hid.UsageTable.keyboard) ++
+        hid.hid_usage_min(1, .{@intFromEnum(HID_KeymodifierCodes.left_control)}) ++
+        hid.hid_usage_max(1, .{@intFromEnum(HID_KeymodifierCodes.right_gui)}) ++
+        hid.hid_logical_min(1, "\x00".*) ++
+        hid.hid_logical_max(1, "\x01".*) ++
+        hid.hid_report_size(1, "\x01".*) ++
+        hid.hid_report_count(1, "\x08".*) ++
+        hid.hid_input(hid.HID_DATA | hid.HID_VARIABLE | hid.HID_ABSOLUTE) ++
+        hid.hid_report_count(1, "\x06".*) ++
+        hid.hid_report_size(1, "\x08".*) ++
+        hid.hid_logical_max(1, "\x65".*) ++
+        hid.hid_usage_min(1, "\x00".*) ++
+        hid.hid_usage_max(1, "\x65".*) ++
+        hid.hid_input(hid.HID_DATA | hid.HID_ARRAY | hid.HID_ABSOLUTE) ++
+        hid.hid_collection_end();
+
+    // HID report buffer
+    const keyboardEpAddr = rp2xxx.usb.Endpoint.to_address(1, .In);
+
+    const usb_packet_size = 7;
+    const usb_config_len = usb.templates.config_descriptor_len + usb.templates.hid_in_descriptor_len;
+    const usb_config_descriptor = usb.templates.config_descriptor(1, 1, 0, usb_config_len, 0x80, 500) ++
+        (usb.types.InterfaceDescriptor{
+            .interface_number = 1,
+            .alternate_setting = 0,
+            .num_endpoints = 1,
+            .interface_class = 3,
+            .interface_subclass = 0,
+            .interface_protocol = 1,
+            .interface_s = 4,
+        }).serialize() ++
+        (hid.HidDescriptor{
+            .bcd_hid = 0x0111,
+            .country_code = 0,
+            .num_descriptors = 1,
+            .report_length = KeyboardReportDescriptor.len,
+        }).serialize() ++
+        (usb.types.EndpointDescriptor{
+            .endpoint_address = keyboardEpAddr,
+            .attributes = @intFromEnum(usb.types.TransferType.Interrupt),
+            .max_packet_size = usb_packet_size,
+            .interval = 10,
+        }).serialize();
+
+    // Create keyboard HID driver
+    var driver_keyboard = usb.hid.HidClassDriver{
+        .ep_in = keyboardEpAddr,
+        .report_descriptor = &KeyboardReportDescriptor,
+    };
+
+    // Register both drivers
+    var drivers = [_]usb.types.UsbClassDriver{driver_keyboard.driver()};
+
+    // This is our device configuration
+    pub var DEVICE_CONFIGURATION: usb.DeviceConfiguration = .{
+        .device_descriptor = &.{
+            .descriptor_type = usb.DescType.Device,
+            .bcd_usb = 0x0200,
+            .device_class = 0,
+            .device_subclass = 0,
+            .device_protocol = 0,
+            .max_packet_size0 = 64,
+            .vendor = 0xFAFA,
+            .product = 0x00F0,
+            .bcd_device = 0x0100,
+            // Those are indices to the descriptor strings (starting from 1)
+            // Make sure to provide enough string descriptors!
+            .manufacturer_s = 1,
+            .product_s = 2,
+            .serial_s = 3,
+            .num_configurations = 1,
+        },
+        .config_descriptor = &usb_config_descriptor,
+        .lang_descriptor = "\x04\x03\x09\x04", // length || string descriptor (0x03) || Engl (0x0409)
+        .descriptor_strings = &.{
+            &usb.utils.utf8_to_utf16_le("Stephan Møller"),
+            &usb.utils.utf8_to_utf16_le("ZigMkay"),
+            &usb.utils.utf8_to_utf16_le("00000001"),
+            &usb.utils.utf8_to_utf16_le("Keyboard"),
+        },
+        .drivers = &drivers,
+    };
+
+    pub fn init(usb_dev_to_use: type) void {
+        // First we initialize the USB clock
+        usb_dev_to_use.init_clk();
+
+        // Then initialize the USB device using the configuration defined above
+        usb_dev_to_use.init_device(&DEVICE_CONFIGURATION) catch unreachable;
+
+        // Initialize endpoint for HID device
+        usb_dev_to_use.callbacks.endpoint_open(keyboardEpAddr, 512, usb.types.TransferType.Interrupt);
+        std.log.debug("USB configured", .{});
+    }
+
+    pub fn send_keyboard_report(usb_dev_to_use: type, keycodes: *[7]u8) void {
+        usb_dev_to_use.callbacks.usb_start_tx(keyboardEpAddr, keycodes);
+    }
+};
