@@ -22,7 +22,7 @@ pub fn HelperType(settings: HelperSettings) type {
         var last_hid_send: u64 = 0;
         var buf: [settings.max_buffer_size]u8 = undefined;
         const send_rate_us: u64 = 12000; // some number a little slower than 10ms
-        var last_released: bool = false;
+        var last_released: bool = true;
         pub fn Create() Self {
             usb_if.init(usb_dev);
             return Self{};
@@ -39,27 +39,7 @@ pub fn HelperType(settings: HelperSettings) type {
             }
         }
         fn flush_next() !void {
-            if (last_released) {
-                var i: usize = 2;
-                while (i <= 6 and queue_hid.Count() > 0) {
-                    const peek_var: u8 = queue_hid.peek().?;
-                    if (i > 2 and peek_var <= data[i - 1]) {
-                        break;
-                    } else {
-                        data[i] = queue_hid.dequeue() catch unreachable;
-                    }
-
-                    i += 1;
-                }
-            } else {
-                data[2] = 0;
-                data[3] = 0;
-                data[4] = 0;
-                data[5] = 0;
-                data[6] = 0;
-            }
-            last_released = !last_released;
-
+            try queue_hid.fill_up_til_first_duplicate(&data);
             usb_if.send_keyboard_report(usb_dev, &data);
         }
         pub fn send_string(_: Self, comptime fmt: []const u8, args: anytype) !void {
@@ -221,6 +201,17 @@ pub fn GenericQueue(comptime T: type, comptime max_capacity: usize) type {
                 i -= 1;
             }
         }
+        pub fn fill_up_til_first_duplicate(self: *Self, hid_buffer: []u8) !void {
+            var i: usize = 2;
+            while (i < hid_buffer.len) {
+                if (self.Count() > 0) {
+                    hid_buffer[i] = try self.dequeue();
+                } else {
+                    hid_buffer[i] = 0;
+                }
+                i += 1;
+            }
+        }
         pub fn dequeue(self: *Self) DequeueError!T {
             if (self.size == 0) {
                 return DequeueError.NoElements;
@@ -363,3 +354,61 @@ const usb_if = struct {
         usb_dev_to_use.callbacks.usb_start_tx(keyboardEpAddr, keycodes);
     }
 };
+
+test "fill testing 1" {
+    var buffer: [7]u8 = @splat(0);
+    var queue = GenericQueue(u8, 1000).Create();
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, data[0]);
+    try std.testing.expectEqual(0, data[1]);
+    try std.testing.expectEqual(0, data[2]);
+    try std.testing.expectEqual(0, data[3]);
+    try std.testing.expectEqual(0, data[4]);
+    try std.testing.expectEqual(0, data[5]);
+    try std.testing.expectEqual(0, data[6]);
+}
+
+test "fill testing 2" {
+    var buffer: [7]u8 = @splat(0);
+    var queue = GenericQueue(u8, 1000).Create();
+
+    try queue.enqueue(1);
+    try queue.enqueue(2);
+    try queue.enqueue(3);
+    try queue.enqueue(4);
+    try queue.enqueue(5);
+    try queue.enqueue(6);
+    try queue.enqueue(7);
+    try queue.enqueue(8);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(1, buffer[2]);
+    try std.testing.expectEqual(2, buffer[3]);
+    try std.testing.expectEqual(3, buffer[4]);
+    try std.testing.expectEqual(4, buffer[5]);
+    try std.testing.expectEqual(5, buffer[6]);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(6, buffer[2]);
+    try std.testing.expectEqual(7, buffer[3]);
+    try std.testing.expectEqual(8, buffer[4]);
+    try std.testing.expectEqual(0, buffer[5]);
+    try std.testing.expectEqual(0, buffer[6]);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(0, buffer[2]);
+    try std.testing.expectEqual(0, buffer[3]);
+    try std.testing.expectEqual(0, buffer[4]);
+    try std.testing.expectEqual(0, buffer[5]);
+    try std.testing.expectEqual(0, buffer[6]);
+}

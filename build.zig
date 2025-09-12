@@ -19,4 +19,16 @@ pub fn build(b: *std.Build) void {
     // We call this twice to demonstrate that the default binary output for
     // RP2040 is UF2, but we can also output other formats easily
     mb.install_firmware(firmware, .{});
+
+    const test_files = &[_][]const u8{
+        "src/usb_keyboard.zig",
+    };
+
+    const test_step = b.step("test", "Run unit tests");
+
+    for (test_files) |path| {
+        const test_exe = b.addTest(.{ .root_source_file = .{ .src_path = .{ .owner = b, .sub_path = path } } });
+        const run = b.addRunArtifact(test_exe);
+        test_step.dependOn(&run.step);
+    }
 }
