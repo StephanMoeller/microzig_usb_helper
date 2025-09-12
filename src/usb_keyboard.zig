@@ -39,7 +39,16 @@ pub fn HelperType(settings: HelperSettings) type {
             }
         }
         fn flush_next() !void {
-            try queue_hid.fill_up_til_first_duplicate(&data);
+            if (last_released) {
+                try queue_hid.fill_up_til_first_duplicate(&data);
+            } else {
+                data[2] = 0;
+                data[3] = 0;
+                data[4] = 0;
+                data[5] = 0;
+                data[6] = 0;
+            }
+            last_released = !last_released;
             usb_if.send_keyboard_report(usb_dev, &data);
         }
         pub fn send_string(_: Self, comptime fmt: []const u8, args: anytype) !void {
@@ -203,12 +212,27 @@ pub fn GenericQueue(comptime T: type, comptime max_capacity: usize) type {
         }
         pub fn fill_up_til_first_duplicate(self: *Self, hid_buffer: []u8) !void {
             var i: usize = 2;
+            var duplicate_found: bool = false;
             while (i < hid_buffer.len) {
-                if (self.Count() > 0) {
-                    hid_buffer[i] = try self.dequeue();
+                const next_or_null = self.peek();
+                if (next_or_null) |next| {
+                    var j: usize = 2;
+                    while (j < i) {
+                        if (next == hid_buffer[j]) {
+                            duplicate_found = true;
+                        }
+                        j += 1;
+                    }
+                    if (!duplicate_found) {
+                        hid_buffer[i] = try self.dequeue();
+                    } else {
+                        hid_buffer[i] = 0;
+                    }
                 } else {
+                    // no more elements in queue
                     hid_buffer[i] = 0;
                 }
+
                 i += 1;
             }
         }
@@ -401,6 +425,50 @@ test "fill testing 2" {
     try std.testing.expectEqual(8, buffer[4]);
     try std.testing.expectEqual(0, buffer[5]);
     try std.testing.expectEqual(0, buffer[6]);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(0, buffer[2]);
+    try std.testing.expectEqual(0, buffer[3]);
+    try std.testing.expectEqual(0, buffer[4]);
+    try std.testing.expectEqual(0, buffer[5]);
+    try std.testing.expectEqual(0, buffer[6]);
+}
+
+test "fill testing 3 - dublicate handling" {
+    var buffer: [7]u8 = @splat(0);
+    var queue = GenericQueue(u8, 1000).Create();
+
+    try queue.enqueue(1);
+    try queue.enqueue(2);
+    try queue.enqueue(3);
+    try queue.enqueue(1);
+    try queue.enqueue(5);
+    try queue.enqueue(6);
+    try queue.enqueue(7);
+    try queue.enqueue(8);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(1, buffer[2]);
+    try std.testing.expectEqual(2, buffer[3]);
+    try std.testing.expectEqual(3, buffer[4]);
+    try std.testing.expectEqual(0, buffer[5]);
+    try std.testing.expectEqual(0, buffer[6]);
+
+    try queue.fill_up_til_first_duplicate(&buffer);
+
+    try std.testing.expectEqual(0, buffer[0]);
+    try std.testing.expectEqual(0, buffer[1]);
+    try std.testing.expectEqual(1, buffer[2]);
+    try std.testing.expectEqual(5, buffer[3]);
+    try std.testing.expectEqual(6, buffer[4]);
+    try std.testing.expectEqual(7, buffer[5]);
+    try std.testing.expectEqual(8, buffer[6]);
 
     try queue.fill_up_til_first_duplicate(&buffer);
 
